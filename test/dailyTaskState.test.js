@@ -114,19 +114,19 @@ test("point reward selection uses server points and claimed map for daily and we
 test("config version is verified each run while immutable configuration requests are merged", async () => {
   let reads = 0;
   let versions = 0;
-  const store = {
-    async sendMessageWithPromise() {
+  const cdn = "https://xxz-xyzw-res.hortorgames.com/data";
+  const fetchConfig = async (url) => {
+    if (url === `${cdn}/version.json`) {
       versions++;
-      return { dataBundleVer: "test-config-merge" };
-    },
-  };
-  const fetchConfig = async () => {
+      return { ok: true, json: async () => ({ version: "test-config-merge" }) };
+    }
+    assert.equal(url, `${cdn}/test-config-merge/config.json`);
     reads++;
     return { ok: true, json: async () => officialConfig() };
   };
   const [a, b] = await Promise.all([
-    loadDailyTaskConfig(store, "a", fetchConfig),
-    loadDailyTaskConfig(store, "b", fetchConfig),
+    loadDailyTaskConfig(null, "a", fetchConfig),
+    loadDailyTaskConfig(null, "b", fetchConfig),
   ]);
   assert.equal(a, b);
   assert.equal(reads, 1);
@@ -135,32 +135,27 @@ test("config version is verified each run while immutable configuration requests
 
 test("failed config reads can be retried and unsafe versions are rejected", async () => {
   let attempt = 0;
-  const store = {
-    async sendMessageWithPromise() {
-      return { dataBundleVer: "test-config-retry" };
-    },
+  const fetchConfig = async (url) => {
+    if (url.endsWith("/version.json"))
+      return { ok: true, json: async () => ({ version: "test-config-retry" }) };
+    return { ok: ++attempt > 1, json: async () => officialConfig() };
   };
-  const fetchConfig = async () => ({
-    ok: ++attempt > 1,
-    json: async () => officialConfig(),
-  });
   await assert.rejects(
-    loadDailyTaskConfig(store, "a", fetchConfig),
-    /读取失败/,
+    loadDailyTaskConfig(null, "a", fetchConfig),
+    /任务配置读取失败/,
   );
-  await loadDailyTaskConfig(store, "a", fetchConfig);
+  await loadDailyTaskConfig(null, "a", fetchConfig);
   assert.equal(attempt, 2);
   await assert.rejects(
-    loadDailyTaskConfig(
-      {
-        async sendMessageWithPromise() {
-          return { dataBundleVer: "../invalid" };
-        },
-      },
-      "a",
-      fetchConfig,
-    ),
+    loadDailyTaskConfig(null, "a", async (url) => {
+      assert.ok(url.endsWith("/version.json"));
+      return { ok: true, json: async () => ({ version: "../invalid" }) };
+    }),
     /有效/,
+  );
+  await assert.rejects(
+    loadDailyTaskConfig(null, "a", async () => ({ ok: false })),
+    /任务版本信息读取失败/,
   );
 });
 
@@ -179,11 +174,10 @@ test("an evicted failed config request cannot remove a newer cached request for 
     entered = resolve;
   });
   let readsA = 0;
-  const store = {
-    sendMessageWithPromise: async (id) => ({ dataBundleVer: id }),
-  };
-  const fetchConfig = async (url) => {
-    if (url.includes("cache-race-a") && ++readsA === 1) {
+  const fetchConfig = (version) => async (url) => {
+    if (url.endsWith("/version.json"))
+      return { ok: true, json: async () => ({ version }) };
+    if (version === "cache-race-a" && ++readsA === 1) {
       entered();
       return new Promise((resolve, reject) => {
         rejectFirst = reject;
@@ -191,13 +185,14 @@ test("an evicted failed config request cannot remove a newer cached request for 
     }
     return { ok: true, json: async () => officialConfig() };
   };
-  const first = loadDailyTaskConfig(store, "cache-race-a", fetchConfig);
+  const load = (version) => loadDailyTaskConfig(null, "a", fetchConfig(version));
+  const first = load("cache-race-a");
   const rejected = assert.rejects(first, /first request failed/);
   await started;
-  await loadDailyTaskConfig(store, "cache-race-b", fetchConfig);
-  await loadDailyTaskConfig(store, "cache-race-a", fetchConfig);
+  await load("cache-race-b");
+  await load("cache-race-a");
   rejectFirst(new Error("first request failed"));
   await rejected;
-  await loadDailyTaskConfig(store, "cache-race-a", fetchConfig);
+  await load("cache-race-a");
   assert.equal(readsA, 2);
 });
