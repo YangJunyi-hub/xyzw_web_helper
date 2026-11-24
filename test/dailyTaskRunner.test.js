@@ -657,7 +657,7 @@ test("arena runs all 3 free fights when none have been done today", async () => 
 
 test("arena skips if all 3 free fights already done today", async () => {
   const arenaSettings = { ...settings, arenaEnable: true };
-  const f = fixture({ 13: -1 }); // condition 13 已领奖
+  const f = fixture({ 13: 0 }); // Daily task still pending; no free fights remain.
   f.role.statistics["area:arena:last"] = 3;
   f.role.statisticsTime["area:arena:last"] = 1700000010; // 在 dailyTime 之后
   const result = await f.runner().run("account-a", {}, arenaSettings);
@@ -675,6 +675,20 @@ test("arena runs only remaining free fights when 1 already done today", async ()
   const arenaCalls = f.calls.filter((c) => c.cmd === "fight_startareaarena");
   assert.equal(arenaCalls.length, 2, "今日已打1次，应补足剩余2次");
   assert.equal(result.failed, 0);
+});
+
+test("arena caps attempts at the starting free quota if server statistics lag", async () => {
+  const f = fixture({ 13: 0 });
+  f.role.statistics["area:arena:last"] = 2;
+  f.role.statisticsTime["area:arena:last"] = 1700000010;
+  const send = f.store.sendMessageWithPromise;
+  f.store.sendMessageWithPromise = async (...args) => {
+    const response = await send(...args);
+    if (args[1] === "fight_startareaarena") f.role.statistics["area:arena:last"] = 2;
+    return response;
+  };
+  await f.runner().run("account-a", {}, { ...settings, arenaEnable: true });
+  assert.equal(f.calls.filter((c) => c.cmd === "fight_startareaarena").length, 1);
 });
 
 test("arena runs remaining free fights even when daily task 13 is already claimed", async () => {

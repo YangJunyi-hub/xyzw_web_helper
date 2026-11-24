@@ -505,10 +505,7 @@ export class DailyTaskRunner {
     }
 
     // 2. 竞技场 (根据官方 area:arena:last 动态判断免费，循环打满免费)
-    if (
-      settings.arenaEnable &&
-      (getArenaRemainingFree() > 0 || !isTaskCompleted(13))
-    ) {
+    if (settings.arenaEnable && getArenaRemainingFree() > 0) {
       taskList.push({
         name: "竞技场免费挑战",
         execute: async () => {
@@ -540,12 +537,10 @@ export class DailyTaskRunner {
           }
 
           let battleCount = 0;
-          const maxSafetyLimit = 5;
-          while (
-            (getArenaRemainingFree() > 0 || !isTaskCompleted(13)) &&
-            battleCount < maxSafetyLimit
-          ) {
+          const freeLimit = Math.min(3, getArenaRemainingFree());
+          while (battleCount < freeLimit) {
             const leftFree = getArenaRemainingFree();
+            if (leftFree <= 0) break;
             battleCount++;
             this.log(
               `竞技场战斗 第${battleCount}场 (当前剩余免费: ${leftFree}次)`,
